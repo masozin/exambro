@@ -14,9 +14,7 @@ class _WebviewPageState extends State<WebviewPage> {
   late final WebViewController controller;
   bool isLoading = true;
   bool examFinished = false;
-
-  // Timer (sementara 1 menit untuk test)
-  int remainingSeconds = 1 * 60;
+  int remainingSeconds = 5 * 60; // Contoh 5 menit
   Timer? countdownTimer;
 
   static const platform = MethodChannel('exambro/lockmode');
@@ -25,29 +23,51 @@ class _WebviewPageState extends State<WebviewPage> {
   void initState() {
     super.initState();
 
-    // LOCK TASK MODE
-    platform.invokeMethod("enableLockMode");
-
-    // WEBVIEW
+    // Inisialisasi Controller
     controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      // 1. TAMBAHAN PENTING: Set User Agent agar Google Form tidak redirect ke aplikasi native
+      ..setUserAgent(
+        "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36",
+      )
       ..setNavigationDelegate(
         NavigationDelegate(
-          onPageStarted: (_) {
-            setState(() => isLoading = true);
+          onPageStarted: (_) => setState(() => isLoading = true),
+          onPageFinished: (_) => setState(() => isLoading = false),
+          onWebResourceError: (error) {
+            // Filter error agar tidak spam di UI jika hanya error redirect
+            if (error.description.contains("net::ERR_FILE_NOT_FOUND")) return;
+
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text("Error memuat: ${error.description}")),
+            );
           },
-          onPageFinished: (_) {
-            setState(() => isLoading = false);
+          // 2. TAMBAHAN PENTING: Mencegah navigasi ke intent:// atau market://
+          onNavigationRequest: (NavigationRequest request) {
+            final url = request.url;
+
+            // Hanya izinkan HTTP dan HTTPS
+            if (url.startsWith('http://') || url.startsWith('https://')) {
+              return NavigationDecision.navigate;
+            }
+
+            // Blokir intent://, file://, mailto:, whatsapp:, dll agar tidak error FILE_NOT_FOUND
+            debugPrint("Memblokir navigasi eksternal: $url");
+            return NavigationDecision.prevent;
           },
         ),
       )
       ..loadRequest(Uri.parse("https://masozin.github.io/asesmen-mtsnf/"));
 
+    // Bersihkan cache agar sesi login fresh (Opsional, tapi disarankan untuk ujian)
+    controller.clearCache();
+    controller.clearLocalStorage();
+
     startTimer();
   }
 
   void startTimer() {
-    countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
+    countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (remainingSeconds <= 0) {
         timer.cancel();
         setState(() {
@@ -61,9 +81,19 @@ class _WebviewPageState extends State<WebviewPage> {
     });
   }
 
-  Future<void> exitApp() async {
-    await platform.invokeMethod("disableLockMode");
-    SystemNavigator.pop();
+  // Fungsi untuk keluar ujian dengan aman
+  Future<void> _finishExam() async {
+    // 1. Matikan Lock Mode
+    try {
+      await platform.invokeMethod("disableLockMode");
+    } catch (e) {
+      debugPrint("Gagal disable lock mode: $e");
+    }
+
+    // 2. Navigasi kembali ke halaman utama
+    if (mounted) {
+      Navigator.pop(context);
+    }
   }
 
   String formatTime(int sec) {
@@ -78,66 +108,79 @@ class _WebviewPageState extends State<WebviewPage> {
     super.dispose();
   }
 
-  Future<bool> _onWillPop() async {
-    if (!examFinished) {
-      // jangan keluar selama ujian berlangsung
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Ujian sedang berlangsung.')),
-      );
-      return false;
-    }
-    return true;
-  }
-
   @override
   Widget build(BuildContext context) {
-    return WillPopScope(
-      onWillPop: _onWillPop,
+    return PopScope(
+      canPop: false, // Mencegah tombol back sistem
+      onPopInvoked: (didPop) {
+        if (didPop) return;
 
+        if (examFinished) {
+          _finishExam();
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Ujian sedang berlangsung. Tidak bisa kembali.'),
+            ),
+          );
+        }
+      },
       child: Scaffold(
         body: SafeArea(
           child: Stack(
             children: [
-              // WEBVIEW
               WebViewWidget(controller: controller),
-
-              // LOADING
               if (isLoading) const Center(child: CircularProgressIndicator()),
 
-              // PANEL TIMER + EXIT (pojok kanan bawah)
+              // Floating Timer & Exit Control
               Positioned(
-                bottom: 10,
-                right: 10,
+                bottom: 20,
+                right: 20,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    // TIMER
                     Container(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 8,
+                        horizontal: 16,
+                        vertical: 10,
                       ),
                       decoration: BoxDecoration(
-                        color: Colors.black.withOpacity(0.8),
-                        borderRadius: BorderRadius.circular(12),
+                        color: Colors.indigo.withOpacity(0.9),
+                        borderRadius: BorderRadius.circular(20),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black26,
+                            blurRadius: 4,
+                            offset: Offset(0, 2),
+                          ),
+                        ],
                       ),
-                      child: Text(
-                        "⏳ ${formatTime(remainingSeconds)}",
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.timer,
+                            color: Colors.white,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            formatTime(remainingSeconds),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-
                     const SizedBox(height: 10),
-
-                    // BUTTON EXIT (tampil saat ujian selesai)
                     if (examFinished)
-                      ElevatedButton(
-                        onPressed: exitApp,
-                        child: const Text("Keluar"),
+                      FloatingActionButton.extended(
+                        onPressed: _finishExam,
+                        label: const Text("Selesai & Keluar"),
+                        icon: const Icon(Icons.check_circle),
+                        backgroundColor: Colors.green,
                       ),
                   ],
                 ),

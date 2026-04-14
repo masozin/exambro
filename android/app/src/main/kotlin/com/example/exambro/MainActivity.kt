@@ -1,76 +1,103 @@
+// ============================================================
+// MainActivity.kt — Native Android: Lock Mode, DND, Audio Alert
+// ============================================================
+
 package com.example.exambro
 
-import io.flutter.embedding.android.FlutterActivity
-import android.os.Bundle
-import android.view.WindowManager
-import android.app.NotificationManager
-import android.content.Intent
-import android.provider.Settings
-import io.flutter.plugin.common.MethodChannel
-import io.flutter.embedding.engine.FlutterEngine
-import android.util.Log
 import android.app.ActivityManager
+import android.app.NotificationManager
 import android.content.Context
-import android.os.Build
-import android.media.MediaPlayer
+import android.content.Intent
 import android.media.AudioAttributes
+import android.media.AudioFocusRequest
 import android.media.AudioManager
-import android.media.AudioFocusRequest // Tambahan untuk Android O+
+import android.media.MediaPlayer
+import android.os.Build
+import android.os.Bundle
+import android.provider.Settings
+import android.util.Log
+import android.view.WindowManager
+import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
 
-    // Variable untuk player suara
+    companion object {
+        private const val TAG = "ExambroNative"
+        private const val CHANNEL_LOCK = "exambro/lockmode"
+        private const val CHANNEL_DND  = "exam.channel"
+    }
+
+    // ── State ─────────────────────────────────────────────────
     private var mediaPlayer: MediaPlayer? = null
-    // Flag untuk menandakan ujian sedang aktif atau tidak
     private var isExamRunning = false
+
+    // ── Lifecycle ─────────────────────────────────────────────
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Mencegah screenshot/record screen
+        // Cegah screenshot & screen recording
         window.setFlags(
             WindowManager.LayoutParams.FLAG_SECURE,
-            WindowManager.LayoutParams.FLAG_SECURE
+            WindowManager.LayoutParams.FLAG_SECURE,
         )
     }
 
+    override fun onPause() {
+        super.onPause()
+        Log.d(TAG, "onPause — examRunning=$isExamRunning")
+        if (isExamRunning) playAlertSound()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        Log.d(TAG, "onResume")
+        stopAlertSound()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        stopAlertSound()
+    }
+
+    // ── Flutter Method Channels ───────────────────────────────
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        setupDndChannel(flutterEngine)
+        setupLockChannel(flutterEngine)
+    }
 
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "exam.channel")
+    private fun setupDndChannel(engine: FlutterEngine) {
+        MethodChannel(engine.dartExecutor.binaryMessenger, CHANNEL_DND)
             .setMethodCallHandler { call, result ->
-                if (call.method == "checkAndEnableDND") {
-                    val isGranted = checkAndEnableDND()
-                    result.success(isGranted)
-                } else {
-                    result.notImplemented()
+                when (call.method) {
+                    "checkAndEnableDND" -> {
+                        val openSettings = call.argument<Boolean>("openSettings") ?: true
+                        result.success(checkAndEnableDnd(openSettings))
+                    }
+                    else -> result.notImplemented()
                 }
             }
+    }
 
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "exambro/lockmode")
+    private fun setupLockChannel(engine: FlutterEngine) {
+        MethodChannel(engine.dartExecutor.binaryMessenger, CHANNEL_LOCK)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "enableLockMode" -> {
-                        isExamRunning = true // Tandai ujian mulai
+                        isExamRunning = true
                         enablePinnedMode()
                         result.success(true)
                     }
                     "disableLockMode" -> {
-                        isExamRunning = false // Tandai ujian selesai
+                        isExamRunning = false
                         disablePinnedMode()
-                        stopAlertSound() // Pastikan suara mati
+                        stopAlertSound()
                         result.success(true)
                     }
-                    "isLockTaskActive" -> {
-                        val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-                        val isActive = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                            val state = am.lockTaskModeState
-                            state != ActivityManager.LOCK_TASK_MODE_NONE
-                        } else {
-                            @Suppress("DEPRECATION")
-                            am.isInLockTaskMode
-                        }
-                        result.success(isActive)
-                    }
+                    "isLockTaskActive" -> result.success(isLockTaskActive())
                     "exitExam" -> {
                         isExamRunning = false
                         exitExam()
@@ -81,184 +108,174 @@ class MainActivity : FlutterActivity() {
             }
     }
 
-    // --- LIFECYCLE HANDLERS ---
-    
-    // Dipanggil saat user minimize aplikasi, tekan home, atau switch app
-    override fun onPause() {
-        super.onPause()
-        Log.d("ExambroNative", "onPause Detected. ExamRunning: $isExamRunning")
-        
-        // Jika ujian sedang berjalan dan aplikasi di-minimize/background
-        if (isExamRunning) {
-            playAlertSound()
-        }
-    }
-
-    // Dipanggil saat user kembali ke aplikasi
-    override fun onResume() {
-        super.onResume()
-        Log.d("ExambroNative", "onResume Detected.")
-        // Matikan suara saat user kembali
-        stopAlertSound()
-    }
-    
-    // --- AUDIO LOGIC (CUSTOM SOUND) ---
-
-    private fun playAlertSound() {
-        try {
-            val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-
-            // 1. FORCE RINGER MODE NORMAL (Agar tidak silent)
-            if (audioManager.ringerMode != AudioManager.RINGER_MODE_NORMAL) {
-                try {
-                   audioManager.ringerMode = AudioManager.RINGER_MODE_NORMAL
-                } catch (e: Exception) {
-                   Log.e("ExambroNative", "Gagal ubah ringer mode: ${e.message}")
-                }
-            }
-
-            // 2. REQUEST AUDIO FOCUS (PENTING AGAR BUNYI DI BACKGROUND)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
-                    .setAudioAttributes(
-                        AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_ALARM)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                            .build()
-                    )
-                    .setAcceptsDelayedFocusGain(true)
-                    .setOnAudioFocusChangeListener { /* Listener kosong, kita handle logic sendiri */ }
-                    .build()
-                audioManager.requestAudioFocus(focusRequest)
-            } else {
-                @Suppress("DEPRECATION")
-                audioManager.requestAudioFocus(
-                    null,
-                    AudioManager.STREAM_ALARM,
-                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE
-                )
-            }
-
-            // 3. SETUP PLAYER
-            if (mediaPlayer == null) {
-                mediaPlayer = MediaPlayer()
-            }
-
-            if (mediaPlayer?.isPlaying == false) {
-                mediaPlayer?.reset() 
-                
-                val afd = resources.openRawResourceFd(R.raw.siren)
-                if (afd == null) {
-                     Log.e("ExambroNative", "File suara tidak ditemukan di raw/siren")
-                     return
-                }
-
-                mediaPlayer?.setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
-                afd.close()
-
-                val audioAttributes = AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_ALARM)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                    .setFlags(AudioAttributes.FLAG_AUDIBILITY_ENFORCED)
-                    .build()
-                    
-                mediaPlayer?.setAudioAttributes(audioAttributes)
-                mediaPlayer?.isLooping = true 
-                mediaPlayer?.setVolume(1.0f, 1.0f) // Pastikan volume player MAX
-                mediaPlayer?.prepare() 
-
-                // 4. FORCE DEVICE VOLUME MAX
-                val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM)
-                audioManager.setStreamVolume(AudioManager.STREAM_ALARM, maxVolume, 0)
-
-                mediaPlayer?.start()
-                Log.d("ExambroNative", "Custom Siren Sound Started with Audio Focus")
-            }
-        } catch (e: Exception) {
-            Log.e("ExambroNative", "Error playing custom sound: ${e.message}")
-            e.printStackTrace()
-        }
-    }
-
-    private fun stopAlertSound() {
-        try {
-            // Lepaskan Audio Focus saat suara berhenti
-            val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE).build()
-                audioManager.abandonAudioFocusRequest(focusRequest)
-            } else {
-                @Suppress("DEPRECATION")
-                audioManager.abandonAudioFocus(null)
-            }
-
-            mediaPlayer?.let {
-                if (it.isPlaying) {
-                    it.stop()
-                }
-                it.release() 
-            }
-            mediaPlayer = null
-        } catch (e: Exception) {
-            Log.e("ExambroNative", "Error stopping sound: ${e.message}")
-        }
-    }
-    
-    // --- EXISTING METHODS ---
+    // ── Lock Mode ─────────────────────────────────────────────
 
     private fun enablePinnedMode() {
         try {
             startLockTask()
-            Log.d("ExambroNative", "Requesting startLockTask()")
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            Log.d(TAG, "startLockTask() requested")
         } catch (e: Exception) {
-            Log.e("ExambroNative", "Failed to Request Lock Mode: ${e.message}")
+            Log.e(TAG, "enablePinnedMode error: ${e.message}")
         }
     }
 
     private fun disablePinnedMode() {
         try {
             stopLockTask()
-            Log.d("ExambroNative", "Requesting stopLockTask()")
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            Log.d(TAG, "stopLockTask() requested")
         } catch (e: Exception) {
-            Log.e("ExambroNative", "Failed to Disable Lock Mode: ${e.message}")
+            Log.e(TAG, "disablePinnedMode error: ${e.message}")
         }
     }
 
-    private fun checkAndEnableDND(): Boolean {
-        val notificationManager =
-            getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-
-        if (!notificationManager.isNotificationPolicyAccessGranted) {
-            val intent = Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)
-            startActivity(intent)
-            return false 
+    private fun isLockTaskActive(): Boolean {
+        val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            am.lockTaskModeState != ActivityManager.LOCK_TASK_MODE_NONE
         } else {
-            // PERBAIKAN: Gunakan INTERRUPTION_FILTER_ALARMS agar Alarm tetap bunyi
-            // INTERRUPTION_FILTER_NONE = Blokir TOTAL (termasuk alarm di beberapa HP)
-            // INTERRUPTION_FILTER_ALARMS = Blokir Telepon/WA tapi Alarm JALAN.
-            notificationManager.setInterruptionFilter(
-                NotificationManager.INTERRUPTION_FILTER_ALARMS
-            )
-            return true 
+            @Suppress("DEPRECATION")
+            am.isInLockTaskMode
         }
     }
 
     private fun exitExam() {
-        stopAlertSound() // Safety stop
+        stopAlertSound()
         try {
-            try {
-                stopLockTask()
-            } catch (inner: Exception) {
-                Log.w("ExambroNative", "stopLockTask failed: ${inner.message}")
+            try { stopLockTask() } catch (e: Exception) {
+                Log.w(TAG, "stopLockTask in exit failed: ${e.message}")
             }
-            finishAffinity() 
+            finishAffinity()
         } catch (e: Exception) {
-            Log.e("ExambroNative", "Failed exitExam: ${e.message}")
+            Log.e(TAG, "exitExam error: ${e.message}")
         }
     }
-    
-    override fun onDestroy() {
-        super.onDestroy()
-        stopAlertSound()
+
+    // ── DND ───────────────────────────────────────────────────
+
+    /**
+     * Cek & aktifkan Do Not Disturb.
+     * [openSettings] = true → buka halaman pengaturan jika belum ada izin.
+     * Kembalikan true jika izin sudah granted dan DND berhasil diaktifkan.
+     */
+    private fun checkAndEnableDnd(openSettings: Boolean): Boolean {
+        val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        return if (!nm.isNotificationPolicyAccessGranted) {
+            if (openSettings) {
+                startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
+            }
+            false
+        } else {
+            nm.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_ALARMS)
+            true
+        }
+    }
+
+    // ── Audio Alert ───────────────────────────────────────────
+
+    private fun playAlertSound() {
+        try {
+            val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+
+            // 1. Paksa ringer mode normal
+            if (audioManager.ringerMode != AudioManager.RINGER_MODE_NORMAL) {
+                try {
+                    audioManager.ringerMode = AudioManager.RINGER_MODE_NORMAL
+                } catch (e: Exception) {
+                    Log.e(TAG, "Gagal ubah ringer mode: ${e.message}")
+                }
+            }
+
+            // 2. Request audio focus
+            requestAudioFocus(audioManager)
+
+            // 3. Setup MediaPlayer
+            if (mediaPlayer == null) mediaPlayer = MediaPlayer()
+
+            if (mediaPlayer?.isPlaying == false) {
+                mediaPlayer?.reset()
+
+                val afd = resources.openRawResourceFd(R.raw.siren)
+                    ?: run {
+                        Log.e(TAG, "File siren tidak ditemukan di res/raw/")
+                        return
+                    }
+
+                mediaPlayer?.apply {
+                    setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
+                    afd.close()
+                    setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_ALARM)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                            .setFlags(AudioAttributes.FLAG_AUDIBILITY_ENFORCED)
+                            .build(),
+                    )
+                    isLooping = true
+                    setVolume(1.0f, 1.0f)
+                    prepare()
+
+                    // 4. Paksa volume alarm ke maksimum
+                    val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM)
+                    audioManager.setStreamVolume(AudioManager.STREAM_ALARM, maxVol, 0)
+
+                    start()
+                    Log.d(TAG, "Alert sound started")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "playAlertSound error: ${e.message}")
+        }
+    }
+
+    private fun stopAlertSound() {
+        try {
+            val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            abandonAudioFocus(audioManager)
+
+            mediaPlayer?.let {
+                if (it.isPlaying) it.stop()
+                it.release()
+            }
+            mediaPlayer = null
+            Log.d(TAG, "Alert sound stopped")
+        } catch (e: Exception) {
+            Log.e(TAG, "stopAlertSound error: ${e.message}")
+        }
+    }
+
+    private fun requestAudioFocus(audioManager: AudioManager) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build(),
+                )
+                .setAcceptsDelayedFocusGain(true)
+                .setOnAudioFocusChangeListener { }
+                .build()
+            audioManager.requestAudioFocus(req)
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager.requestAudioFocus(
+                null,
+                AudioManager.STREAM_ALARM,
+                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE,
+            )
+        }
+    }
+
+    private fun abandonAudioFocus(audioManager: AudioManager) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
+                .build()
+            audioManager.abandonAudioFocusRequest(req)
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager.abandonAudioFocus(null)
+        }
     }
 }

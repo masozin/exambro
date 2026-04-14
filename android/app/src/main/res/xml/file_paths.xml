@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- res/xml/file_paths.xml -->
+<!-- Digunakan FileProvider agar Android 7+ bisa membuka APK dari temp dir -->
+<paths>
+    <cache-path name="exambro_cache" path="." />
+    <external-path name="exambro_external" path="." />
+</paths>

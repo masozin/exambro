@@ -55,7 +55,7 @@ class _ExamPageState extends State<ExamPage> with WidgetsBindingObserver {
 
     _perms = [
       _PermItem(
-        label: 'Jangan Ganggu (DND)',
+        label: 'Jangan Ganggu',
         description: 'Mencegah notifikasi masuk selama ujian berlangsung.',
         icon: Icons.do_not_disturb_on_rounded,
         required: true,
@@ -66,19 +66,20 @@ class _ExamPageState extends State<ExamPage> with WidgetsBindingObserver {
         icon: Icons.camera_alt_rounded,
         required: true,
       ),
-      _PermItem(
-        label: 'Penyematan Layar',
-        description: 'Mengunci layar agar tidak bisa keluar saat ujian.',
-        icon: Icons.lock_rounded,
-        required: false, // dikonfirmasi native saat mulai, bukan permission_handler
-        granted: false,
-      ),
-      _PermItem(
-        label: 'Instal Aplikasi',
-        description: 'Mengizinkan pembaruan otomatis dari server sekolah.',
-        icon: Icons.system_update_rounded,
-        required: false,
-      ),
+      // _PermItem(
+      //   label: 'Update Aplikasi',
+      //   description: 'Mengizinkan pembaruan otomatis.',
+      //   icon: Icons.system_update_rounded,
+      //   required: false,
+      // ),
+      // _PermItem(
+      //   label: 'Penyematan Layar',
+      //   description: 'Mengunci layar agar tidak bisa keluar saat ujian.',
+      //   icon: Icons.lock_rounded,
+      //   required:
+      //       false, // dikonfirmasi native saat mulai, bukan permission_handler
+      //   granted: false,
+      // ),
     ];
 
     WidgetsBinding.instance.addObserver(this);
@@ -104,11 +105,7 @@ class _ExamPageState extends State<ExamPage> with WidgetsBindingObserver {
   // ── Check semua izin ─────────────────────────────────────────
 
   Future<void> _checkAllPermissions() async {
-    await Future.wait([
-      _checkDnd(),
-      _checkCamera(),
-      _checkInstall(),
-    ]);
+    await Future.wait([_checkDnd(), _checkCamera(), _checkInstall()]);
     // Index 2 = Penyematan Layar: tidak bisa dicek via permission_handler,
     // dibiarkan granted=false dan ditampilkan sebagai "Saat ujian"
   }
@@ -148,7 +145,10 @@ class _ExamPageState extends State<ExamPage> with WidgetsBindingObserver {
         for (int i = 0; i < 10; i++) {
           await Future.delayed(const Duration(seconds: 1));
           final ok = await ExamService.isDndGranted();
-          if (ok) { _setPermState(0, true); return; }
+          if (ok) {
+            _setPermState(0, true);
+            return;
+          }
         }
         _setPermState(0, false);
 
@@ -157,7 +157,7 @@ class _ExamPageState extends State<ExamPage> with WidgetsBindingObserver {
         if (!result.isGranted && mounted) openAppSettings();
         _setPermState(1, result.isGranted);
 
-      case 3: // Install APK
+      case 2: // Install APK
         final result = await Permission.requestInstallPackages.request();
         if (!result.isGranted && mounted) openAppSettings();
         _setPermState(3, result.isGranted);
@@ -166,8 +166,7 @@ class _ExamPageState extends State<ExamPage> with WidgetsBindingObserver {
 
   // ── Semua izin WAJIB sudah granted? ─────────────────────────
 
-  bool get _canStart =>
-      _perms.where((p) => p.required).every((p) => p.granted);
+  bool get _canStart => _perms.where((p) => p.required).every((p) => p.granted);
 
   // ── Aksi ─────────────────────────────────────────────────────
 
@@ -226,7 +225,10 @@ class _ExamPageState extends State<ExamPage> with WidgetsBindingObserver {
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Ya, Keluar', style: TextStyle(color: Colors.red)),
+            child: const Text(
+              'Ya, Keluar',
+              style: TextStyle(color: Colors.red),
+            ),
           ),
         ],
       ),
@@ -269,8 +271,11 @@ class _ExamPageState extends State<ExamPage> with WidgetsBindingObserver {
             children: [
               // ── Header ─────────────────────────────────────
               const SizedBox(height: 28),
+              _SchoolLogo(),
+              const SizedBox(height: 16),
+
               const Text(
-                'CBT EXAM BROWSER',
+                'APLIKASI UJIAN',
                 style: TextStyle(
                   color: Colors.white,
                   fontSize: 14,
@@ -278,7 +283,7 @@ class _ExamPageState extends State<ExamPage> with WidgetsBindingObserver {
                   fontWeight: FontWeight.w500,
                 ),
               ),
-              const SizedBox(height: 6),
+
               const Text(
                 AppConstants.schoolName,
                 style: TextStyle(
@@ -312,8 +317,6 @@ class _ExamPageState extends State<ExamPage> with WidgetsBindingObserver {
                     padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
                     child: Column(
                       children: [
-                        // Logo
-                        _SchoolLogo(),
                         const SizedBox(height: 16),
 
                         // Banner update
@@ -327,11 +330,11 @@ class _ExamPageState extends State<ExamPage> with WidgetsBindingObserver {
                           perms: _perms,
                           onRequest: _requestPermission,
                         ),
-                        const SizedBox(height: 14),
+                        const SizedBox(height: 18),
 
                         // Status lock
                         _LockStatusIndicator(isActive: _isLockModeActive),
-                        const SizedBox(height: 18),
+                        const SizedBox(height: 24),
 
                         // Tombol mulai
                         _StartButton(
@@ -339,7 +342,7 @@ class _ExamPageState extends State<ExamPage> with WidgetsBindingObserver {
                           canStart: _canStart,
                           onPressed: _handleStartExam,
                           onBlocked: () => _showSnackBar(
-                            'Aktifkan semua izin wajib (DND & Kamera) terlebih dahulu.',
+                            'Aktifkan semua izin wajib terlebih dahulu.',
                             isError: true,
                           ),
                         ),
@@ -357,8 +360,10 @@ class _ExamPageState extends State<ExamPage> with WidgetsBindingObserver {
                         const SizedBox(height: 4),
                         Text(
                           'v${AppConstants.appVersion} ${AppConstants.appName}',
-                          style:
-                              TextStyle(color: Colors.grey[400], fontSize: 11),
+                          style: TextStyle(
+                            color: Colors.grey[400],
+                            fontSize: 11,
+                          ),
                         ),
                         const SizedBox(height: 8),
                       ],
@@ -406,8 +411,7 @@ class _PermissionCard extends StatelessWidget {
           // Header
           Container(
             width: double.infinity,
-            padding:
-                const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
             decoration: BoxDecoration(
               color: allOk
                   ? Colors.green.withOpacity(0.08)
@@ -441,8 +445,10 @@ class _PermissionCard extends StatelessWidget {
                 ),
                 // Badge jumlah izin
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
                     color: allOk ? Colors.green : Colors.orange,
                     borderRadius: BorderRadius.circular(20),
@@ -474,8 +480,10 @@ class _PermissionCard extends StatelessWidget {
             ),
             itemBuilder: (_, i) => _PermRow(
               item: perms[i],
-              isLockItem: i == 2, // index 2 = Penyematan Layar
-              onTap: i == 2 ? null : () => onRequest(i),
+              isLockItem:
+                  i ==
+                  3, // index 3 = Penyematan Layar sementara tidak ditampilkan
+              onTap: i == 3 ? null : () => onRequest(i),
             ),
           ),
         ],
@@ -513,8 +521,9 @@ class _PermRow extends StatelessWidget {
       statusLabel = 'Aktif';
     } else {
       statusColor = item.required ? Colors.red : Colors.orange;
-      statusIcon =
-          item.required ? Icons.cancel_rounded : Icons.warning_amber_rounded;
+      statusIcon = item.required
+          ? Icons.cancel_rounded
+          : Icons.warning_amber_rounded;
       statusLabel = item.required ? 'Diperlukan' : 'Opsional';
     }
 
@@ -610,8 +619,10 @@ class _PermRow extends StatelessWidget {
               GestureDetector(
                 onTap: onTap,
                 child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
                   decoration: BoxDecoration(
                     color: item.required ? Colors.indigo : Colors.orange,
                     borderRadius: BorderRadius.circular(8),
@@ -641,8 +652,8 @@ class _SchoolLogo extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 100,
-      width: 100,
+      height: 75,
+      width: 75,
       decoration: BoxDecoration(
         color: Colors.grey[100],
         shape: BoxShape.circle,
@@ -656,7 +667,7 @@ class _SchoolLogo extends StatelessWidget {
       ),
       child: ClipOval(
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(5),
           child: Image.asset(
             'assets/logo_sekolah.png',
             fit: BoxFit.contain,
@@ -751,14 +762,12 @@ class _StartButton extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Icon(
-                    canStart
-                        ? Icons.play_arrow_rounded
-                        : Icons.lock_outlined,
+                    canStart ? Icons.play_arrow_rounded : Icons.lock_outlined,
                     size: 20,
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    canStart ? 'MULAI UJIAN' : 'IZIN BELUM LENGKAP',
+                    canStart ? 'MULAI UJIAN' : 'MULAI UJIAN',
                     style: const TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.bold,

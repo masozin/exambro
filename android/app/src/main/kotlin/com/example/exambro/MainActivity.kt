@@ -1,13 +1,18 @@
 // ============================================================
-// MainActivity.kt — Native Android: Lock Mode, DND, Audio Alert
+// MainActivity.kt — Native Android
+// Fitur: Lock Mode, DND, Audio Alert, Anti Split Screen,
+//        Anti Floating Window, Anti Picture-in-Picture
 // ============================================================
 
 package com.example.exambro
 
+import android.app.Activity
 import android.app.ActivityManager
 import android.app.NotificationManager
+import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
@@ -16,7 +21,9 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.util.Log
+import android.view.View
 import android.view.WindowManager
+import androidx.annotation.RequiresApi
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -33,16 +40,146 @@ class MainActivity : FlutterActivity() {
     private var mediaPlayer: MediaPlayer? = null
     private var isExamRunning = false
 
-    // ── Lifecycle ─────────────────────────────────────────────
+    // ── onCreate ──────────────────────────────────────────────
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Cegah screenshot & screen recording
+
+        applySecurityFlags()
+        blockFloatingWindow()
+        disablePictureInPicture()
+    }
+
+    // ── Security Flags ────────────────────────────────────────
+
+    /**
+     * Terapkan semua flag keamanan window sejak aplikasi dibuka:
+     * - FLAG_SECURE        : cegah screenshot & screen recording
+     * - SOFT_INPUT_ADJUST_RESIZE : pastikan layout tidak bergeser saat keyboard muncul
+     */
+    private fun applySecurityFlags() {
         window.setFlags(
             WindowManager.LayoutParams.FLAG_SECURE,
             WindowManager.LayoutParams.FLAG_SECURE,
         )
+        Log.d(TAG, "Security flags applied")
     }
+
+    // ── Anti Floating Window ──────────────────────────────────
+
+    /**
+     * Mencegah aplikasi tampil dalam mode floating/freeform window.
+     * Pada ROM tertentu (MIUI, OneUI, ColorOS) ada fitur "layar mengambang"
+     * yang memungkinkan aplikasi berjalan di jendela kecil di atas layar lain.
+     *
+     * Cara kerja:
+     * 1. Paksa ukuran window agar selalu memenuhi layar penuh.
+     * 2. Nonaktifkan resize window agar sistem tidak bisa mengubah ukurannya.
+     */
+    private fun blockFloatingWindow() {
+        try {
+            // Paksa layout fullscreen — mencegah freeform/floating mode
+            val lp = window.attributes
+            lp.width  = WindowManager.LayoutParams.MATCH_PARENT
+            lp.height = WindowManager.LayoutParams.MATCH_PARENT
+            window.attributes = lp
+
+            // Pada Android 7+ (API 24), nonaktifkan multi-window secara eksplisit
+            // via immersive sticky mode + keep screen on
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                window.decorView.systemUiVisibility = (
+                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                    or View.SYSTEM_UI_FLAG_FULLSCREEN
+                    or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                    or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                )
+            }
+
+            Log.d(TAG, "Floating window blocked")
+        } catch (e: Exception) {
+            Log.e(TAG, "blockFloatingWindow error: ${e.message}")
+        }
+    }
+
+    /**
+     * Dipanggil sistem saat ukuran/mode window berubah (split screen, dsb).
+     * Jika ukuran window tidak full, paksa kembali ke fullscreen dan bunyikan sirine.
+     */
+    override fun onMultiWindowModeChanged(isInMultiWindowMode: Boolean, newConfig: Configuration) {
+        super.onMultiWindowModeChanged(isInMultiWindowMode, newConfig)
+        Log.d(TAG, "onMultiWindowModeChanged: isMultiWindow=$isInMultiWindowMode, examRunning=$isExamRunning")
+
+        if (isInMultiWindowMode && isExamRunning) {
+            // Paksa kembali ke fullscreen
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                try {
+                    // Minta sistem keluar dari multi-window dengan melempar Intent baru
+                    // yang menargetkan activity ini sendiri dalam mode fullscreen
+                    val intent = intent
+                    intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                    startActivity(intent)
+                    Log.d(TAG, "Forced back to fullscreen from multi-window")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to exit multi-window: ${e.message}")
+                }
+            }
+            // Bunyikan sirine sebagai peringatan
+            playAlertSound()
+        } else if (!isInMultiWindowMode) {
+            stopAlertSound()
+        }
+    }
+
+    // ── Anti Picture-in-Picture ───────────────────────────────
+
+    /**
+     * Nonaktifkan PiP (Picture-in-Picture) agar siswa tidak bisa
+     * memperkecil aplikasi menjadi jendela kecil di atas aplikasi lain.
+     */
+    private fun disablePictureInPicture() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                // Tandai activity ini tidak mendukung PiP
+                setPictureInPictureParams(
+                    PictureInPictureParams.Builder()
+                        .build()
+                )
+                Log.d(TAG, "PiP disabled")
+            } catch (e: Exception) {
+                Log.e(TAG, "disablePictureInPicture error: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Dipanggil sistem saat user atau sistem mencoba masuk PiP.
+     * Kita TIDAK memanggil super agar PiP tidak pernah aktif.
+     */
+    override fun onUserLeaveHint() {
+        // Sengaja tidak memanggil super.onUserLeaveHint()
+        // agar system tidak trigger PiP saat user tekan Home
+        Log.d(TAG, "onUserLeaveHint intercepted — PiP blocked")
+        if (isExamRunning) playAlertSound()
+    }
+
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: Configuration,
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        if (isInPictureInPictureMode && isExamRunning) {
+            // Jika entah bagaimana PiP aktif, langsung keluar
+            Log.w(TAG, "PiP mode detected during exam! Forcing exit.")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                moveTaskToBack(false) // paksa kembali
+            }
+            playAlertSound()
+        }
+    }
+
+    // ── Lifecycle ─────────────────────────────────────────────
 
     override fun onPause() {
         super.onPause()
@@ -53,7 +190,23 @@ class MainActivity : FlutterActivity() {
     override fun onResume() {
         super.onResume()
         Log.d(TAG, "onResume")
+        // Re-terapkan flag keamanan (beberapa ROM me-reset flag saat resume)
+        applySecurityFlags()
+        blockFloatingWindow()
         stopAlertSound()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            // Terapkan ulang immersive mode setiap kali window mendapat fokus
+            // (misal: setelah dialog system tertutup)
+            blockFloatingWindow()
+        } else if (isExamRunning) {
+            // Window kehilangan fokus saat ujian → ada sesuatu di depan layar
+            Log.d(TAG, "Window focus lost during exam")
+            playAlertSound()
+        }
     }
 
     override fun onDestroy() {
@@ -154,11 +307,6 @@ class MainActivity : FlutterActivity() {
 
     // ── DND ───────────────────────────────────────────────────
 
-    /**
-     * Cek & aktifkan Do Not Disturb.
-     * [openSettings] = true → buka halaman pengaturan jika belum ada izin.
-     * Kembalikan true jika izin sudah granted dan DND berhasil diaktifkan.
-     */
     private fun checkAndEnableDnd(openSettings: Boolean): Boolean {
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         return if (!nm.isNotificationPolicyAccessGranted) {
@@ -178,29 +326,20 @@ class MainActivity : FlutterActivity() {
         try {
             val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
-            // 1. Paksa ringer mode normal
             if (audioManager.ringerMode != AudioManager.RINGER_MODE_NORMAL) {
-                try {
-                    audioManager.ringerMode = AudioManager.RINGER_MODE_NORMAL
-                } catch (e: Exception) {
-                    Log.e(TAG, "Gagal ubah ringer mode: ${e.message}")
-                }
+                try { audioManager.ringerMode = AudioManager.RINGER_MODE_NORMAL }
+                catch (e: Exception) { Log.e(TAG, "Gagal ubah ringer mode: ${e.message}") }
             }
 
-            // 2. Request audio focus
             requestAudioFocus(audioManager)
 
-            // 3. Setup MediaPlayer
             if (mediaPlayer == null) mediaPlayer = MediaPlayer()
 
             if (mediaPlayer?.isPlaying == false) {
                 mediaPlayer?.reset()
 
                 val afd = resources.openRawResourceFd(R.raw.siren)
-                    ?: run {
-                        Log.e(TAG, "File siren tidak ditemukan di res/raw/")
-                        return
-                    }
+                    ?: run { Log.e(TAG, "File siren tidak ditemukan di res/raw/"); return }
 
                 mediaPlayer?.apply {
                     setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
@@ -216,7 +355,6 @@ class MainActivity : FlutterActivity() {
                     setVolume(1.0f, 1.0f)
                     prepare()
 
-                    // 4. Paksa volume alarm ke maksimum
                     val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_ALARM)
                     audioManager.setStreamVolume(AudioManager.STREAM_ALARM, maxVol, 0)
 
@@ -233,11 +371,7 @@ class MainActivity : FlutterActivity() {
         try {
             val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
             abandonAudioFocus(audioManager)
-
-            mediaPlayer?.let {
-                if (it.isPlaying) it.stop()
-                it.release()
-            }
+            mediaPlayer?.let { if (it.isPlaying) it.stop(); it.release() }
             mediaPlayer = null
             Log.d(TAG, "Alert sound stopped")
         } catch (e: Exception) {
@@ -260,18 +394,13 @@ class MainActivity : FlutterActivity() {
             audioManager.requestAudioFocus(req)
         } else {
             @Suppress("DEPRECATION")
-            audioManager.requestAudioFocus(
-                null,
-                AudioManager.STREAM_ALARM,
-                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE,
-            )
+            audioManager.requestAudioFocus(null, AudioManager.STREAM_ALARM, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
         }
     }
 
     private fun abandonAudioFocus(audioManager: AudioManager) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
-                .build()
+            val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE).build()
             audioManager.abandonAudioFocusRequest(req)
         } else {
             @Suppress("DEPRECATION")

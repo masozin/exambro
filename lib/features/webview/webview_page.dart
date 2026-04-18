@@ -105,8 +105,11 @@ class _WebviewPageState extends State<WebviewPage> {
             _safetyLoadingTimer?.cancel();
             if (mounted) setState(() => _isLoading = true);
           },
-          onPageFinished: (_) async {
+          onPageFinished: (url) async {
             if (mounted) setState(() => _isLoading = false);
+            // Inject token autentikasi SEBELUM interceptor klik
+            // agar halaman GitHub Pages dapat memverifikasi segera
+            await _injectAuthToken();
             await _injectClickInterceptor();
           },
           onNavigationRequest: (req) {
@@ -136,6 +139,18 @@ class _WebviewPageState extends State<WebviewPage> {
 
     _webController = controller;
     await _webController.loadRequest(Uri.parse(AppConstants.portalUrl));
+  }
+
+  // ── Inject Token Autentikasi ────────────────────────────────────
+  // Disuntik ke SETIAP halaman saat onPageFinished.
+  // GitHub Pages membaca window.__examToken dan memblokir jika tidak cocok.
+  Future<void> _injectAuthToken() async {
+    const token = AppConstants.webviewToken;
+    try {
+      await _webController.runJavaScript("window.__examToken = '$token';");
+    } catch (e) {
+      debugPrint('[WebviewPage] Token inject error: $e');
+    }
   }
 
   // ── JS Injection ─────────────────────────────────────────────

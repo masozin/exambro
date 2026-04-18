@@ -9,14 +9,14 @@
 
     <!-- Kamera (untuk overlay gimmick) -->
     <uses-permission android:name="android.permission.CAMERA" />
-    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera"       android:required="false" />
     <uses-feature android:name="android.hardware.camera.front" android:required="false" />
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
 
     <!-- Install APK dari sumber tidak dikenal (untuk update) -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
-    <!-- Baca/Tulis storage (untuk menyimpan APK sementara) -->
+    <!-- Storage (menyimpan APK update sementara) -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
@@ -35,7 +35,31 @@
             android:theme="@style/LaunchTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
-            android:windowSoftInputMode="adjustResize">
+            android:windowSoftInputMode="adjustResize"
+
+            android:resizeableActivity="false"
+            android:supportsPictureInPicture="false"
+            android:maxAspectRatio="2.4"
+            android:lockTaskMode="if_whitelisted">
+
+            <!--
+                android:resizeableActivity="false"
+                    → Mencegah split screen & freeform/floating window.
+                      Pada Android 12+ sistem mungkin mengabaikan flag ini,
+                      tetapi onMultiWindowModeChanged di Kotlin tetap menanganinya.
+
+                android:supportsPictureInPicture="false"
+                    → Nonaktifkan Picture-in-Picture secara manifest.
+
+                android:maxAspectRatio="2.4"
+                    → Batasi rasio aspek agar tidak bisa dipersempit menjadi
+                      jendela kecil pada perangkat layar besar / tablet.
+
+                android:lockTaskMode="if_whitelisted"
+                    → Izinkan lock task (penyematan layar) hanya jika app
+                      ada dalam daftar whitelist Device Policy Manager.
+                      Tanpa ini, startLockTask() akan menampilkan dialog konfirmasi.
+            -->
 
             <meta-data
                 android:name="io.flutter.embedding.android.NormalTheme"
@@ -68,7 +92,6 @@
             <action android:name="android.intent.action.PROCESS_TEXT" />
             <data android:mimeType="text/plain" />
         </intent>
-        <!-- Untuk membuka/install APK -->
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:mimeType="application/vnd.android.package-archive" />

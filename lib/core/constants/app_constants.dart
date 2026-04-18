@@ -6,9 +6,9 @@ class AppConstants {
   AppConstants._();
 
   // App Info
-  static const String appName = 'Exambro';
+  static const String appName = 'ExamNF';
   static const String schoolName = 'MTs Nurul Falah';
-  static const String appVersion = '1.0.1';
+  static const String appVersion = '1.0.3';
 
   // GitHub Update
   static const String githubOwner = 'masozin';
@@ -23,9 +23,21 @@ class AppConstants {
   // Portal Ujian
   static const String portalUrl = 'https://masozin.github.io/portal-cbt-mtsnf/';
 
+  // ── Token Autentikasi WebView ────────────────────────────────
+  // Token ini di-inject ke setiap halaman oleh Flutter via JavaScript.
+  // GitHub Pages memverifikasinya — jika tidak cocok, halaman diblokir.
+  //
+  // ⚠️  WAJIB DIGANTI sebelum produksi!
+  //     Gunakan string acak panjang, contoh gabungkan 2 UUID:
+  //     https://www.uuidgenerator.net/
+  //
+  // ⚠️  Token yang sama HARUS diisi di index.html GitHub Pages
+  //     pada variabel: const VALID_TOKEN = '...';
+  static const String webviewToken = appVersion;
+
   // Timer
-  static const int lastMinutesWarning = 600;
-  static const int midWarningSeconds = 1800;
+  static const int lastMinutesWarning = 600; //detik
+  static const int midWarningSeconds = 1800; //detik
   static const int dndMaxAttempts = 30;
   static const int lockMaxAttempts = 30;
 
